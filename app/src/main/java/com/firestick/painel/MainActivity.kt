@@ -38,7 +38,7 @@ class MainActivity : Activity() {
         }
         go = Button(this).apply { text = "Conectar"; setOnClickListener { connect() } }
         status = TextView(this).apply { text = "Desconectado"; textSize = 16f; setPadding(0, dp(8), 0, 0) }
-        help = TextView(this).apply { setTextColor(Color.rgb(180, 64, 14)); setPadding(0, dp(4), 0, dp(8)) }
+        help = TextView(this).apply { setTextColor(Color.rgb(180, 64, 14)); setPadding(0, dp(4), 0, dp(8)); setTextIsSelectable(true) }
         root.addView(ip); root.addView(go); root.addView(status); root.addView(help)
 
         root.addView(row(spacer(), key("▲", "input keyevent 19"), spacer()))
@@ -75,7 +75,7 @@ class MainActivity : Activity() {
 
     private fun send(cmd: String) {
         io.execute {
-            try { dadb?.shell(cmd) } catch (e: Exception) {
+            try { dadb?.shell(cmd) } catch (e: Throwable) {
                 ui { status.text = "Conexão perdida"; help.text = "Toque em Conectar para tentar de novo."; setConnected(false); go.text = "Conectar" }
             }
         }
@@ -86,23 +86,31 @@ class MainActivity : Activity() {
         if (host.isEmpty()) return
         go.isEnabled = false; go.text = "Conectando..."; status.text = "Conectando..."; help.text = ""
         io.execute {
+            var step = "início"
             try {
-                try { dadb?.close() } catch (_: Exception) {}
+                try { dadb?.close() } catch (_: Throwable) {}
                 dadb = null
+                step = "1/4 procurando o Fire Stick na porta 5555"
+                ui { status.text = "Passo 1/4: procurando o Fire Stick..." }
                 Socket().use { it.connect(InetSocketAddress(host, 5555), 5000) }
+                step = "2/4 criando a chave de segurança"
+                ui { status.text = "Passo 2/4: preparando a chave..." }
                 val priv = File(filesDir, "adbkey")
                 val pub = File(filesDir, "adbkey.pub")
                 if (!priv.exists()) AdbKeyPair.generate(priv, pub)
-                ui { status.text = "Olhe a TV: se pedir autorização, marque Sempre permitir e escolha OK." }
-                val dd = Dadb.create(host, 5555, AdbKeyPair.read(priv, pub))
+                val keyPair = AdbKeyPair.read(priv, pub)
+                step = "3/4 autenticando no Fire Stick (olhe a TV e aceite)"
+                ui { status.text = "Passo 3/4: olhe a TV e aceite a autorização (Sempre permitir > OK)." }
+                val dd = Dadb.create(host, 5555, keyPair)
+                step = "4/4 enviando comando de teste"
+                ui { status.text = "Passo 4/4: testando..." }
                 dd.shell("echo ok")
                 dadb = dd
                 getPreferences(MODE_PRIVATE).edit().putString("ip", host).apply()
                 ui { status.text = "Conectado"; setConnected(true); go.text = "Reconectar"; go.isEnabled = true }
-            } catch (e: java.io.IOException) {
-                fail("O Fire Stick não respondeu.\n1) Ligue-o e deixe-o no mesmo Wi-Fi do celular.\n2) Ative Configurações > Meu Fire TV > Opções do desenvolvedor > Depuração ADB.\n3) Confira o endereço em Sobre > Rede.")
-            } catch (e: Exception) {
-                fail("Não deu certo: " + (e.message ?: e.javaClass.simpleName) + "\nSe a TV pediu autorização, aceite e tente de novo.")
+            } catch (e: Throwable) {
+                val causa = e.cause?.let { " | causa: " + it.javaClass.simpleName + ": " + it.message } ?: ""
+                fail("Falhou no passo " + step + ".\nErro: " + e.javaClass.simpleName + ": " + (e.message ?: "sem mensagem") + causa)
             }
         }
     }
@@ -114,7 +122,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        try { dadb?.close() } catch (_: Exception) {}
+        try { dadb?.close() } catch (_: Throwable) {}
         io.shutdown()
     }
 }
